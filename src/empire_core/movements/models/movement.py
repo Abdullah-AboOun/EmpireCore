@@ -5,11 +5,12 @@ Army movement models: gam, the recall (mcm), and the movement wrappers pushed wi
 from __future__ import annotations
 
 import logging
+from functools import partial
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import Field, ValidatorFunctionWrapHandler, field_validator, model_validator
 
-from empire_core.commanders.models.roster import Commander
+from empire_core.commanders.models.roster import Commander, read_leader
 from empire_core.enums import AttackAdvisorType, AutoSkipCooldownType, Kingdom, MovementFilter, SpyType
 from empire_core.gamedata import CollectableRows, EnumOrInt, SupportToolSlots, WodAmounts
 from empire_core.map.models.items import MapAreaItem
@@ -222,7 +223,7 @@ class MovementUnitInfo(BasePayload):
     @classmethod
     def _readable_commander(cls, value: Any) -> Any:
         """An unreadable commander costs only itself, not the wait and advisor details."""
-        return read_or_none(Commander.model_validate, value) if value else None
+        return read_or_none(partial(read_leader, Commander), value) if value else None
 
 
 class MovementMarket(BasePayload):

@@ -175,6 +175,21 @@ class TestMalformedMovementBatch:
         assert (leader.commander_id, leader.wearer_id, leader.picture_id, leader.wins) == (3, 2, 5, 2)
         assert [item.unique_id for item in leader.equipment] == [802]
 
+    def test_an_equal_commander_block_is_read_once(self):
+        def read(commander: dict[str, Any]) -> Any:
+            wrapper = GetMovementsResponse.model_validate(
+                {"M": [{**GOOD_MOVEMENT, "UM": {"PWD": 0, "TWD": 20, "L": commander}}]}
+            ).movements[0]
+            assert wrapper.unit_info is not None
+            return wrapper.unit_info.commander
+
+        sent = {"ID": 4, "EQ": [[1, 1, 2, 5, -1, [[500, [30.0]]], 77, -1, 0, -1, -1, 1]]}
+        first = read(sent)
+        assert read(dict(sent)) is first
+        changed = read({**sent, "EQ": [[1, 1, 2, 5, -1, [[500, [30.0]]], 78, -1, 0, -1, -1, 1]]})
+        assert changed is not first and [item.unique_id for item in changed.equipment] == [78]
+        assert read({"N": "no id"}) is None
+
     def test_unreadable_commander_keeps_the_wait(self):
         wrapper = GetMovementsResponse.model_validate(
             {"M": [{**GOOD_MOVEMENT, "UM": {"PWD": 4, "TWD": 20, "L": {"N": "no id"}}}]}

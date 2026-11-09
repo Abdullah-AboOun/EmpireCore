@@ -7,9 +7,12 @@ Commands:
 
 from __future__ import annotations
 
+import json
 import logging
+from collections import OrderedDict
 from functools import partial
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from threading import Lock
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar
 
 from pydantic import (
     BeforeValidator,
@@ -473,6 +476,38 @@ class Castellan(LeaderBase):
         return not (self.picture_id == PICTURE_STORM_ISLANDS_CASTELLAN and kingdom_id != Kingdom.STORM)
 
 
+_L = TypeVar("_L", bound="LeaderBase")
+
+_READ_CACHE_SIZE = 4096
+_read_cache: OrderedDict[tuple[type, str], LeaderBase] = OrderedDict()
+_read_cache_lock = Lock()
+
+
+def read_leader(model: type[_L], value: Any) -> _L:
+    """``model.model_validate(value)``, shared with every earlier read of the same block.
+
+    The server repeats the same commander, all its equipment included, in every
+    movement it leads and in every ``gli``, and reading one is a pure function of
+    its block, so equal blocks share one model. Callers must not edit it.
+    Raises ``ValidationError`` like ``model_validate``; a failed read is not kept.
+    """
+    try:
+        key = (model, json.dumps(value, separators=(",", ":")))
+    except (TypeError, ValueError):  # Not a JSON block, so not a packet's: read it directly.
+        return model.model_validate(value)
+    with _read_cache_lock:
+        cached = _read_cache.get(key)
+        if cached is not None:
+            _read_cache.move_to_end(key)
+            return cached  # type: ignore[return-value]
+    leader = model.model_validate(value)
+    with _read_cache_lock:
+        _read_cache[key] = leader
+        if len(_read_cache) > _READ_CACHE_SIZE:
+            _read_cache.popitem(last=False)
+    return leader
+
+
 class GetCommandersRequest(BaseRequest):
     """
     Request the commander and castellan list.
@@ -509,8 +544,10 @@ class CommanderRoster(BasePayload):
     @field_validator("commanders", "castellans", mode="before")
     @classmethod
     def _readable_entries(cls, value: Any, info: ValidationInfo) -> Any:
-        model = Commander if info.field_name == "commanders" else Castellan
-        return readable_list(model, value, warn=logger, what="gli entries")
+        model: type[LeaderBase] = Castellan
+        if info.field_name == "commanders":
+            model = Commander
+        return readable_list(model, value, parse=partial(read_leader, model), warn=logger, what="gli entries")
 
     @model_validator(mode="after")
     def _client_order(self) -> CommanderRoster:
